@@ -1,0 +1,45 @@
+commands:
+  # Run a specific app's dev server
+  # Usage: nyxx dev web
+  # Usage: nyxx dev api
+  dev:
+    input: 'dev <app>'
+    output: 'pnpm --filter @my-org/{{app}} dev'
+
+  # Build one package or all packages
+  # Usage: nyxx build ui
+  # Usage: nyxx build ui --watch
+  build:
+    input: 'build <pkg> [...args]'
+    output: 'pnpm --filter @my-org/{{pkg}} build {{args}}'
+
+  # Run tests for a package, optionally with a file filter
+  # Usage: nyxx test auth
+  # Usage: nyxx test auth login.test.ts
+  test:
+    input: 'test <pkg> [file]'
+    output: 'pnpm --filter @my-org/{{pkg}} vitest run {{file}}'
+
+  # Publish a package to npm with an optional dist-tag
+  # Usage: nyxx release ui
+  # Usage: nyxx release ui beta
+  release:
+    input: 'release <pkg> [tag]'
+    output: 'pnpm --filter @my-org/{{pkg}} publish --tag {{tag}} --access public'
+    defaults:
+      tag: latest
+
+  # Deploy an app to a target environment
+  # Usage: nyxx deploy api staging
+  # Usage: nyxx deploy web production
+  deploy:
+    input: 'deploy <app> [env]'
+    output: 'pnpm --filter @my-org/{{app}} run deploy:{{env}}'
+    defaults:
+      env: staging
+
+  # Generate a new component inside a package
+  # Usage: nyxx generate ui Button
+  generate:
+    input: 'generate <pkg> <name>'
+    output: 'pnpm --filter @my-org/{{pkg}} run generate {{name}}'
