@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
@@ -24,6 +25,7 @@ import {
   getPackageJsonScripts,
   getNyxxConfig,
   getGlobalConfigPath,
+  findNearestLocalConfig,
   printScriptList,
   runMappedCommand,
 } from './index.ts'
@@ -103,6 +105,28 @@ describe('getNyxxConfig', () => {
   })
 })
 
+describe('findNearestLocalConfig', () => {
+  it('finds nyxx.yml by walking up from a nested directory', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === '/repo/nyxx.yml') return `commands:\n  build:\n    input: 'build'\n    output: 'pnpm build'`
+      throw enoentError()
+    })
+
+    const result = await findNearestLocalConfig('/repo/packages/ui/src')
+
+    expect(result?.directory).toBe('/repo')
+    expect(result?.config.commands.build.output).toBe('pnpm build')
+  })
+
+  it('returns null when no nyxx.yml exists in any ancestor directory', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const result = await findNearestLocalConfig('/repo/packages/ui/src')
+
+    expect(result).toBeNull()
+  })
+})
+
 describe('runMappedCommand', () => {
   beforeEach(() => {
     mockExeca.mockResolvedValue(undefined)
@@ -115,9 +139,12 @@ describe('runMappedCommand', () => {
     }
     const values = { pkg: 'my-app' }
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo/packages/ui/src')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['--filter', 'my-app', 'build'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['--filter', 'my-app', 'build'], {
+      stdio: 'inherit',
+      cwd: '/repo/packages/ui/src',
+    })
   })
 
   it('applies defaults when values are not provided', async () => {
@@ -128,9 +155,9 @@ describe('runMappedCommand', () => {
     }
     const values = {}
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'latest'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'latest'], { stdio: 'inherit', cwd: '/repo' })
   })
 
   it('provided values override defaults', async () => {
@@ -141,9 +168,40 @@ describe('runMappedCommand', () => {
     }
     const values = { tag: 'beta' }
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'beta'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'beta'], { stdio: 'inherit', cwd: '/repo' })
+  })
+
+  it('defaults to running in the invocation directory when runIn is unset', async () => {
+    const commandConfig = { input: 'status', output: 'git status' }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
+  })
+
+  it("runs in the nearest package.json directory when runIn is 'project'", async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === '/repo/package.json') return JSON.stringify({ name: 'repo' })
+      throw enoentError()
+    })
+
+    const commandConfig = { input: 'clean', output: 'rm -rf dist', runIn: 'project' as const }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo' })
+  })
+
+  it("falls back to the invocation directory when runIn is 'project' but no package.json is found", async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const commandConfig = { input: 'clean', output: 'rm -rf dist', runIn: 'project' as const }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
   })
 })
 
