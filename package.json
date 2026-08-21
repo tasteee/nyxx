@@ -9,6 +9,9 @@
   "files": [
     "build"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "nyxx": "build/js/index.js"
   },
