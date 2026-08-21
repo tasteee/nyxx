@@ -112,6 +112,20 @@ export const getNyxxConfig = async (startDirectory: string = process.cwd()) => {
   return { commands }
 }
 
+const emptyGlobalConfigYaml = `# Global nyxx commands, available from any directory.\n# See https://github.com/tasteee/nyxx for the format.\ncommands: {}\n`
+
+// Creates ~/.nyxx.yml with no commands if it doesn't already exist yet.
+export const ensureGlobalConfigExists = async (): Promise<void> => {
+  const globalConfigPath = getGlobalConfigPath()
+
+  try {
+    await fs.access(globalConfigPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    await fs.writeFile(globalConfigPath, emptyGlobalConfigYaml, 'utf8')
+  }
+}
+
 export const getPackageJsonScripts = async (startDirectory: string = process.cwd()): Promise<Record<string, string>> => {
   const result = await findNearestPackageJsonDir(startDirectory)
   const scripts = result?.packageJson?.scripts as Record<string, string> | undefined
@@ -189,9 +203,14 @@ export const runMappedCommand = async (
 
 const main = async () => {
   const invocationDirectory = process.cwd()
+  const hasNoArguments = process.argv.slice(2).length === 0
+
+  if (hasNoArguments) {
+    await ensureGlobalConfigExists()
+  }
+
   const config = await getNyxxConfig(invocationDirectory)
 
-  const hasNoArguments = process.argv.slice(2).length === 0
   if (hasNoArguments) {
     await printScriptList(config, invocationDirectory)
     process.exit(0)

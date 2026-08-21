@@ -2,11 +2,15 @@ import path from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
+const mockAccess = vi.hoisted(() => vi.fn())
+const mockWriteFile = vi.hoisted(() => vi.fn())
 
 vi.mock('node:fs/promises', () => {
   return {
     default: {
       readFile: mockReadFile,
+      access: mockAccess,
+      writeFile: mockWriteFile,
     },
   }
 })
@@ -26,6 +30,7 @@ import {
   getNyxxConfig,
   getGlobalConfigPath,
   findNearestLocalConfig,
+  ensureGlobalConfigExists,
   printScriptList,
   runMappedCommand,
 } from './index.ts'
@@ -102,6 +107,37 @@ describe('getNyxxConfig', () => {
     mockReadFile.mockRejectedValue(enoentError())
 
     await expect(getNyxxConfig()).rejects.toThrow(getGlobalConfigPath())
+  })
+})
+
+describe('ensureGlobalConfigExists', () => {
+  beforeEach(() => {
+    mockAccess.mockReset()
+    mockWriteFile.mockReset()
+  })
+
+  it('does nothing when the global config already exists', async () => {
+    mockAccess.mockResolvedValue(undefined)
+
+    await ensureGlobalConfigExists()
+
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it('creates an empty global config when none exists', async () => {
+    mockAccess.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await ensureGlobalConfigExists()
+
+    expect(mockWriteFile).toHaveBeenCalledWith(getGlobalConfigPath(), expect.stringContaining('commands: {}'), 'utf8')
+  })
+
+  it('rethrows unexpected errors from the existence check', async () => {
+    mockAccess.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+
+    await expect(ensureGlobalConfigExists()).rejects.toThrow('EACCES')
+    expect(mockWriteFile).not.toHaveBeenCalled()
   })
 })
 

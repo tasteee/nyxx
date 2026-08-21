@@ -53,6 +53,8 @@ Commands you want available in every project, regardless of the current director
 
 When `nyxx` runs, it merges the global config with the nearest project-local `nyxx.yml` — found by walking up from the current directory, the same way git finds `.git` — so it works from any subfolder, not just the project root. Local commands take precedence over global ones with the same name. Either file may be present on its own; only if neither exists does `nyxx` error out.
 
+Running `nyxx` with no arguments also creates `~/.nyxx.yml` for you if it doesn't exist yet, starting with no commands (`commands: {}`), so there's nothing to set up by hand before adding your first global command.
+
 ### Where a command runs
 
 By default, a command runs in whatever directory you invoked `nyxx` from. Add `runIn: project` to a command to have it run from the nearest ancestor directory containing a `package.json` instead — useful for commands that assume they're at a package root (like cleaning `dist` or `node_modules`) regardless of which subfolder you called them from.
