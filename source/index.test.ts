@@ -1,11 +1,16 @@
+import path from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
+const mockAccess = vi.hoisted(() => vi.fn())
+const mockWriteFile = vi.hoisted(() => vi.fn())
 
 vi.mock('node:fs/promises', () => {
   return {
     default: {
       readFile: mockReadFile,
+      access: mockAccess,
+      writeFile: mockWriteFile,
     },
   }
 })
@@ -18,7 +23,23 @@ vi.mock('execa', () => {
   }
 })
 
-import { getPackageJsonScripts, getNyxxConfig, printScriptList, runMappedCommand } from './index.ts'
+const enoentError = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+
+import {
+  getPackageJsonScripts,
+  getNyxxConfig,
+  getGlobalConfigPath,
+  findNearestLocalConfig,
+  ensureGlobalConfigExists,
+  parseSaveInvocation,
+  saveGlobalCommand,
+  printScriptList,
+  runMappedCommand,
+} from './index.ts'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('getPackageJsonScripts', () => {
   it('returns parsed scripts from package.json', async () => {
@@ -38,17 +59,181 @@ describe('getPackageJsonScripts', () => {
 
     expect(scripts).toEqual({})
   })
+
+  it('returns empty object when package.json does not exist', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const scripts = await getPackageJsonScripts()
+
+    expect(scripts).toEqual({})
+  })
 })
 
 describe('getNyxxConfig', () => {
-  it('parses and returns the nyxx yaml config', async () => {
-    const fakeYaml = `commands:\n  build:\n    input: 'build <pkg>'\n    output: 'pnpm build'`
-    mockReadFile.mockResolvedValue(fakeYaml)
+  it('parses and returns the local nyxx yaml config', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) throw enoentError()
+      return `commands:\n  build:\n    input: 'build <pkg>'\n    output: 'pnpm build'`
+    })
 
     const config = await getNyxxConfig()
 
     expect(config.commands.build.input).toBe('build <pkg>')
     expect(config.commands.build.output).toBe('pnpm build')
+  })
+
+  it('falls back to the global config when no local nyxx.yml exists', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) {
+        return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'pnpm deploy {{app}}'`
+      }
+      throw enoentError()
+    })
+
+    const config = await getNyxxConfig()
+
+    expect(config.commands.deploy.input).toBe('deploy <app>')
+  })
+
+  it('merges global and local commands, with local commands taking precedence', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) {
+        return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'global deploy'\n  status:\n    input: 'status'\n    output: 'git status'`
+      }
+      return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'local deploy'`
+    })
+
+    const config = await getNyxxConfig()
+
+    expect(config.commands.deploy.output).toBe('local deploy')
+    expect(config.commands.status.output).toBe('git status')
+  })
+
+  it('throws a helpful error when neither config exists', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    await expect(getNyxxConfig()).rejects.toThrow(getGlobalConfigPath())
+  })
+
+  it('rejects a user-defined command whose input starts with "--"', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) throw enoentError()
+      return `commands:\n  bad:\n    input: '--save'\n    output: 'echo oops'`
+    })
+
+    await expect(getNyxxConfig()).rejects.toThrow(/reserved/)
+  })
+})
+
+describe('parseSaveInvocation', () => {
+  it('parses a well-formed --save invocation', () => {
+    const result = parseSaveInvocation(['--save', 'lint', '--', 'eslint', '.', '--fix'])
+
+    expect(result).toEqual({ name: 'lint', commandTokens: ['eslint', '.', '--fix'] })
+  })
+
+  it('returns null when the first token is not --save', () => {
+    expect(parseSaveInvocation(['lint', '--', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when the -- separator is missing', () => {
+    expect(parseSaveInvocation(['--save', 'lint', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when the name is missing', () => {
+    expect(parseSaveInvocation(['--save', '--', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when there are no command tokens after --', () => {
+    expect(parseSaveInvocation(['--save', 'lint', '--'])).toBeNull()
+  })
+})
+
+describe('saveGlobalCommand', () => {
+  it('writes a new command into an empty global config', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const output = await saveGlobalCommand('lint', ['eslint', '.', '--fix'])
+
+    expect(output).toBe('eslint . --fix')
+    const [writtenPath, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenPath).toBe(getGlobalConfigPath())
+    expect(writtenContent).toContain('lint:')
+    expect(writtenContent).toContain('eslint . --fix')
+  })
+
+  it('preserves existing global commands when adding a new one', async () => {
+    mockReadFile.mockResolvedValue(`commands:\n  deploy:\n    input: 'deploy'\n    output: 'pnpm deploy'`)
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await saveGlobalCommand('lint', ['eslint', '.'])
+
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenContent).toContain('deploy')
+    expect(writtenContent).toContain('lint:')
+  })
+
+  it('quotes command tokens that contain spaces', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const output = await saveGlobalCommand('greet', ['echo', 'hello world'])
+
+    expect(output).toBe('echo "hello world"')
+  })
+})
+
+describe('ensureGlobalConfigExists', () => {
+  beforeEach(() => {
+    mockAccess.mockReset()
+    mockWriteFile.mockReset()
+  })
+
+  it('does nothing when the global config already exists', async () => {
+    mockAccess.mockResolvedValue(undefined)
+
+    await ensureGlobalConfigExists()
+
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it('creates an empty global config when none exists', async () => {
+    mockAccess.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await ensureGlobalConfigExists()
+
+    expect(mockWriteFile).toHaveBeenCalledWith(getGlobalConfigPath(), expect.stringContaining('commands: {}'), 'utf8')
+  })
+
+  it('rethrows unexpected errors from the existence check', async () => {
+    mockAccess.mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+
+    await expect(ensureGlobalConfigExists()).rejects.toThrow('EACCES')
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('findNearestLocalConfig', () => {
+  it('finds nyxx.yml by walking up from a nested directory', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === '/repo/nyxx.yml') return `commands:\n  build:\n    input: 'build'\n    output: 'pnpm build'`
+      throw enoentError()
+    })
+
+    const result = await findNearestLocalConfig('/repo/packages/ui/src')
+
+    expect(result?.directory).toBe('/repo')
+    expect(result?.config.commands.build.output).toBe('pnpm build')
+  })
+
+  it('returns null when no nyxx.yml exists in any ancestor directory', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const result = await findNearestLocalConfig('/repo/packages/ui/src')
+
+    expect(result).toBeNull()
   })
 })
 
@@ -64,9 +249,12 @@ describe('runMappedCommand', () => {
     }
     const values = { pkg: 'my-app' }
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo/packages/ui/src')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['--filter', 'my-app', 'build'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['--filter', 'my-app', 'build'], {
+      stdio: 'inherit',
+      cwd: '/repo/packages/ui/src',
+    })
   })
 
   it('applies defaults when values are not provided', async () => {
@@ -77,9 +265,9 @@ describe('runMappedCommand', () => {
     }
     const values = {}
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'latest'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'latest'], { stdio: 'inherit', cwd: '/repo' })
   })
 
   it('provided values override defaults', async () => {
@@ -90,9 +278,40 @@ describe('runMappedCommand', () => {
     }
     const values = { tag: 'beta' }
 
-    await runMappedCommand(commandConfig, values)
+    await runMappedCommand(commandConfig, values, '/repo')
 
-    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'beta'], { stdio: 'inherit' })
+    expect(mockExeca).toHaveBeenCalledWith('pnpm', ['publish', '--tag', 'beta'], { stdio: 'inherit', cwd: '/repo' })
+  })
+
+  it('defaults to running in the invocation directory when runIn is unset', async () => {
+    const commandConfig = { input: 'status', output: 'git status' }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('git', ['status'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
+  })
+
+  it("runs in the nearest package.json directory when runIn is 'project'", async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === '/repo/package.json') return JSON.stringify({ name: 'repo' })
+      throw enoentError()
+    })
+
+    const commandConfig = { input: 'clean', output: 'rm -rf dist', runIn: 'project' as const }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo' })
+  })
+
+  it("falls back to the invocation directory when runIn is 'project' but no package.json is found", async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const commandConfig = { input: 'clean', output: 'rm -rf dist', runIn: 'project' as const }
+
+    await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
+
+    expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
   })
 })
 
