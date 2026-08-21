@@ -31,9 +31,15 @@ import {
   getGlobalConfigPath,
   findNearestLocalConfig,
   ensureGlobalConfigExists,
+  parseSaveInvocation,
+  saveGlobalCommand,
   printScriptList,
   runMappedCommand,
 } from './index.ts'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('getPackageJsonScripts', () => {
   it('returns parsed scripts from package.json', async () => {
@@ -107,6 +113,74 @@ describe('getNyxxConfig', () => {
     mockReadFile.mockRejectedValue(enoentError())
 
     await expect(getNyxxConfig()).rejects.toThrow(getGlobalConfigPath())
+  })
+
+  it('rejects a user-defined command whose input starts with "--"', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) throw enoentError()
+      return `commands:\n  bad:\n    input: '--save'\n    output: 'echo oops'`
+    })
+
+    await expect(getNyxxConfig()).rejects.toThrow(/reserved/)
+  })
+})
+
+describe('parseSaveInvocation', () => {
+  it('parses a well-formed --save invocation', () => {
+    const result = parseSaveInvocation(['--save', 'lint', '--', 'eslint', '.', '--fix'])
+
+    expect(result).toEqual({ name: 'lint', commandTokens: ['eslint', '.', '--fix'] })
+  })
+
+  it('returns null when the first token is not --save', () => {
+    expect(parseSaveInvocation(['lint', '--', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when the -- separator is missing', () => {
+    expect(parseSaveInvocation(['--save', 'lint', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when the name is missing', () => {
+    expect(parseSaveInvocation(['--save', '--', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when there are no command tokens after --', () => {
+    expect(parseSaveInvocation(['--save', 'lint', '--'])).toBeNull()
+  })
+})
+
+describe('saveGlobalCommand', () => {
+  it('writes a new command into an empty global config', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const output = await saveGlobalCommand('lint', ['eslint', '.', '--fix'])
+
+    expect(output).toBe('eslint . --fix')
+    const [writtenPath, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenPath).toBe(getGlobalConfigPath())
+    expect(writtenContent).toContain('lint:')
+    expect(writtenContent).toContain('eslint . --fix')
+  })
+
+  it('preserves existing global commands when adding a new one', async () => {
+    mockReadFile.mockResolvedValue(`commands:\n  deploy:\n    input: 'deploy'\n    output: 'pnpm deploy'`)
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await saveGlobalCommand('lint', ['eslint', '.'])
+
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenContent).toContain('deploy')
+    expect(writtenContent).toContain('lint:')
+  })
+
+  it('quotes command tokens that contain spaces', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const output = await saveGlobalCommand('greet', ['echo', 'hello world'])
+
+    expect(output).toBe('echo "hello world"')
   })
 })
 

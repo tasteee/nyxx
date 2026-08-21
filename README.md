@@ -55,6 +55,14 @@ When `nyxx` runs, it merges the global config with the nearest project-local `ny
 
 Running `nyxx` with no arguments also creates `~/.nyxx.yml` for you if it doesn't exist yet, starting with no commands (`commands: {}`), so there's nothing to set up by hand before adding your first global command.
 
+You can also register a global command straight from the terminal, without editing YAML:
+
+```sh
+nyxx --save lint -- eslint . --fix
+```
+
+Everything after `--` is saved verbatim as the command's `output`, and `lint` becomes available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
+
 ### Where a command runs
 
 By default, a command runs in whatever directory you invoked `nyxx` from. Add `runIn: project` to a command to have it run from the nearest ancestor directory containing a `package.json` instead — useful for commands that assume they're at a package root (like cleaning `dist` or `node_modules`) regardless of which subfolder you called them from.

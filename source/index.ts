@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { cac } from 'cac'
 import { execa } from 'execa'
-import { parse as parseYaml } from 'yaml'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseArgsStringToArgv } from 'string-argv'
 import Handlebars from 'handlebars'
 
@@ -109,6 +109,12 @@ export const getNyxxConfig = async (startDirectory: string = process.cwd()) => {
     ...(localResult?.config?.commands ?? {}),
   }
 
+  for (const [name, commandConfig] of Object.entries(commands as Record<string, CommandConfigT>)) {
+    if (commandConfig.input.startsWith('--')) {
+      throw new Error(`Invalid command "${name}": input must not start with "--" (reserved for nyxx's own flags, like --save)`)
+    }
+  }
+
   return { commands }
 }
 
@@ -124,6 +130,40 @@ export const ensureGlobalConfigExists = async (): Promise<void> => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     await fs.writeFile(globalConfigPath, emptyGlobalConfigYaml, 'utf8')
   }
+}
+
+// Parses `--save <name> -- <command...>` from raw argv (process.argv.slice(2)).
+// Returns null if argv doesn't match that shape, so the caller can print usage.
+export const parseSaveInvocation = (argv: string[]): { name: string; commandTokens: string[] } | null => {
+  if (argv[0] !== '--save') return null
+  if (argv[2] !== '--') return null
+
+  const name = argv[1]
+  const commandTokens = argv.slice(3)
+  if (!name || commandTokens.length === 0) return null
+
+  return { name, commandTokens }
+}
+
+const quoteArgumentIfNeeded = (argument: string): string => {
+  const needsQuoting = /\s|"/.test(argument)
+  if (!needsQuoting) return argument
+  return `"${argument.replace(/"/g, '\\"')}"`
+}
+
+// Registers <name> as a global command that runs commandTokens verbatim,
+// writing the result into ~/.nyxx.yml. Returns the joined output string.
+export const saveGlobalCommand = async (name: string, commandTokens: string[]): Promise<string> => {
+  const globalConfigPath = getGlobalConfigPath()
+  const existingConfig = (await readYamlFileIfExists(globalConfigPath)) ?? {}
+  const commands = { ...(existingConfig.commands ?? {}) }
+  const output = commandTokens.map(quoteArgumentIfNeeded).join(' ')
+
+  commands[name] = { input: name, output }
+  const updatedConfig = { ...existingConfig, commands }
+  await fs.writeFile(globalConfigPath, stringifyYaml(updatedConfig), 'utf8')
+
+  return output
 }
 
 export const getPackageJsonScripts = async (startDirectory: string = process.cwd()): Promise<Record<string, string>> => {
@@ -203,7 +243,22 @@ export const runMappedCommand = async (
 
 const main = async () => {
   const invocationDirectory = process.cwd()
-  const hasNoArguments = process.argv.slice(2).length === 0
+  const argv = process.argv.slice(2)
+
+  if (argv[0] === '--save') {
+    const parsed = parseSaveInvocation(argv)
+
+    if (!parsed) {
+      console.error('Usage: nyxx --save <name> -- <command...>')
+      process.exit(1)
+    }
+
+    const output = await saveGlobalCommand(parsed.name, parsed.commandTokens)
+    console.log(`Saved global command "${parsed.name}" -> ${output}`)
+    process.exit(0)
+  }
+
+  const hasNoArguments = argv.length === 0
 
   if (hasNoArguments) {
     await ensureGlobalConfigExists()
