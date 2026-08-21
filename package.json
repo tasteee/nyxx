@@ -1,17 +1,21 @@
 {
   "name": "@tasteee/nyxx",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "script maps",
   "license": "ISC",
   "author": "",
   "type": "module",
-  "main": "index.js",
+  "main": "build/js/index.js",
+  "files": [
+    "build"
+  ],
   "bin": {
     "nyxx": "build/js/index.js"
   },
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@manypkg/get-packages": "^3.1.0",
