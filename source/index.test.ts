@@ -18,7 +18,15 @@ vi.mock('execa', () => {
   }
 })
 
-import { getPackageJsonScripts, getNyxxConfig, printScriptList, runMappedCommand } from './index.ts'
+const enoentError = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+
+import {
+  getPackageJsonScripts,
+  getNyxxConfig,
+  getGlobalConfigPath,
+  printScriptList,
+  runMappedCommand,
+} from './index.ts'
 
 describe('getPackageJsonScripts', () => {
   it('returns parsed scripts from package.json', async () => {
@@ -38,17 +46,60 @@ describe('getPackageJsonScripts', () => {
 
     expect(scripts).toEqual({})
   })
+
+  it('returns empty object when package.json does not exist', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    const scripts = await getPackageJsonScripts()
+
+    expect(scripts).toEqual({})
+  })
 })
 
 describe('getNyxxConfig', () => {
-  it('parses and returns the nyxx yaml config', async () => {
-    const fakeYaml = `commands:\n  build:\n    input: 'build <pkg>'\n    output: 'pnpm build'`
-    mockReadFile.mockResolvedValue(fakeYaml)
+  it('parses and returns the local nyxx yaml config', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) throw enoentError()
+      return `commands:\n  build:\n    input: 'build <pkg>'\n    output: 'pnpm build'`
+    })
 
     const config = await getNyxxConfig()
 
     expect(config.commands.build.input).toBe('build <pkg>')
     expect(config.commands.build.output).toBe('pnpm build')
+  })
+
+  it('falls back to the global config when no local nyxx.yml exists', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) {
+        return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'pnpm deploy {{app}}'`
+      }
+      throw enoentError()
+    })
+
+    const config = await getNyxxConfig()
+
+    expect(config.commands.deploy.input).toBe('deploy <app>')
+  })
+
+  it('merges global and local commands, with local commands taking precedence', async () => {
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      if (filePath === getGlobalConfigPath()) {
+        return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'global deploy'\n  status:\n    input: 'status'\n    output: 'git status'`
+      }
+      return `commands:\n  deploy:\n    input: 'deploy <app>'\n    output: 'local deploy'`
+    })
+
+    const config = await getNyxxConfig()
+
+    expect(config.commands.deploy.output).toBe('local deploy')
+    expect(config.commands.status.output).toBe('git status')
+  })
+
+  it('throws a helpful error when neither config exists', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+
+    await expect(getNyxxConfig()).rejects.toThrow(getGlobalConfigPath())
   })
 })
 

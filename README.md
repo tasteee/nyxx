@@ -47,6 +47,12 @@ commands:
       tag: latest
 ```
 
+### Global config
+
+Commands you want available in every project, regardless of the current directory, can live in a global config at `~/.nyxx.yml`. It uses the same format as a project's `nyxx.yml`.
+
+When `nyxx` runs, it merges the global config with the project-local `nyxx.yml` (if one exists in the current directory) — local commands take precedence over global ones with the same name. Either file may be present on its own; only if neither exists does `nyxx` error out.
+
 ### Argument syntax
 
 | Syntax      | Meaning                                    |

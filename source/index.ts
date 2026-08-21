@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
@@ -37,17 +39,49 @@ const yellow = (text: string): string => {
   return `\x1b[33m${text}\x1b[0m`
 }
 
+export const getGlobalConfigPath = (): string => {
+  return path.join(os.homedir(), '.nyxx.yml')
+}
+
+const readYamlFileIfExists = async (filePath: string): Promise<any> => {
+  try {
+    const text = await fs.readFile(filePath, 'utf8')
+    return parseYaml(text)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+// Merges the global config (~/.nyxx.yml, available from any directory) with the
+// project-local nyxx.yml, if one is present. Local commands take precedence over
+// global commands of the same name.
 export const getNyxxConfig = async () => {
-  const configText = await fs.readFile('nyxx.yml', 'utf8')
-  const config = parseYaml(configText)
-  return config
+  const globalConfig = await readYamlFileIfExists(getGlobalConfigPath())
+  const localConfig = await readYamlFileIfExists('nyxx.yml')
+
+  if (!globalConfig && !localConfig) {
+    throw new Error(`No nyxx.yml found in the current directory or at ${getGlobalConfigPath()}`)
+  }
+
+  const commands = {
+    ...(globalConfig?.commands ?? {}),
+    ...(localConfig?.commands ?? {}),
+  }
+
+  return { commands }
 }
 
 export const getPackageJsonScripts = async (): Promise<Record<string, string>> => {
-  const packageJsonText = await fs.readFile('package.json', 'utf8')
-  const packageJson = JSON.parse(packageJsonText)
-  const scripts = packageJson.scripts as Record<string, string> | undefined
-  return scripts ?? {}
+  try {
+    const packageJsonText = await fs.readFile('package.json', 'utf8')
+    const packageJson = JSON.parse(packageJsonText)
+    const scripts = packageJson.scripts as Record<string, string> | undefined
+    return scripts ?? {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
 }
 
 export const printScriptList = async (config: Awaited<ReturnType<typeof getNyxxConfig>>) => {
@@ -55,8 +89,8 @@ export const printScriptList = async (config: Awaited<ReturnType<typeof getNyxxC
   const packageScriptEntries = Object.entries(packageScripts)
   const nyxxCommandEntries = Object.entries(config.commands as Record<string, CommandConfigT>)
 
-  const packageNameColumnWidth = Math.max(...packageScriptEntries.map((entry) => entry[0].length))
-  const nyxxInputColumnWidth = Math.max(...nyxxCommandEntries.map((entry) => entry[1].input.length))
+  const packageNameColumnWidth = Math.max(0, ...packageScriptEntries.map((entry) => entry[0].length))
+  const nyxxInputColumnWidth = Math.max(0, ...nyxxCommandEntries.map((entry) => entry[1].input.length))
   const divider = dim('─'.repeat(42))
 
   console.log()
