@@ -4,6 +4,10 @@
   "description": "script maps",
   "license": "ISC",
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tasteee/nyxx"
+  },
   "type": "module",
   "main": "build/js/index.js",
   "files": [
