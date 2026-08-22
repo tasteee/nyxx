@@ -1,21 +1,8 @@
 {
   "name": "@tasteee/nyxx",
   "version": "1.1.0",
-  "description": "script maps",
-  "license": "ISC",
-  "author": "",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/tasteee/nyxx"
-  },
   "type": "module",
   "main": "build/js/index.js",
-  "files": [
-    "build"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
   "bin": {
     "nyxx": "build/js/index.js"
   },
@@ -23,6 +10,10 @@
     "build": "tsdown",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsdown": "^0.21.10",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@manypkg/get-packages": "^3.1.0",
@@ -33,8 +24,17 @@
     "string-argv": "^0.3.2",
     "yaml": "^2.8.3"
   },
-  "devDependencies": {
-    "tsdown": "^0.21.10",
-    "vitest": "^4.1.5"
+  "files": [
+    "build"
+  ],
+  "description": "script maps",
+  "author": "tasteink",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tasteee/nyxx"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
