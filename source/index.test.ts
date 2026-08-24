@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
 const mockAccess = vi.hoisted(() => vi.fn())
@@ -127,25 +128,38 @@ describe('getNyxxConfig', () => {
 
 describe('parseSaveInvocation', () => {
   it('parses a well-formed --save invocation', () => {
-    const result = parseSaveInvocation(['--save', 'lint', '--', 'eslint', '.', '--fix'])
+    // Simulates: nyxx --save lint "lint" "eslint . --fix"
+    const result = parseSaveInvocation(['--save', 'lint', 'lint', 'eslint . --fix'])
 
-    expect(result).toEqual({ name: 'lint', commandTokens: ['eslint', '.', '--fix'] })
+    expect(result).toEqual({ name: 'lint', input: 'lint', output: 'eslint . --fix' })
+  })
+
+  it('parses a quoted multi-word input with a placeholder, and a quoted output', () => {
+    // Simulates: nyxx --save commit "commit <message>" "git commit -m {{message}}"
+    const result = parseSaveInvocation(['--save', 'commit', 'commit <message>', 'git commit -m {{message}}'])
+
+    expect(result).toEqual({ name: 'commit', input: 'commit <message>', output: 'git commit -m {{message}}' })
   })
 
   it('returns null when the first token is not --save', () => {
-    expect(parseSaveInvocation(['lint', '--', 'eslint'])).toBeNull()
-  })
-
-  it('returns null when the -- separator is missing', () => {
-    expect(parseSaveInvocation(['--save', 'lint', 'eslint'])).toBeNull()
+    expect(parseSaveInvocation(['lint', 'lint', 'eslint'])).toBeNull()
   })
 
   it('returns null when the name is missing', () => {
-    expect(parseSaveInvocation(['--save', '--', 'eslint'])).toBeNull()
+    expect(parseSaveInvocation(['--save', '', 'lint', 'eslint'])).toBeNull()
   })
 
-  it('returns null when there are no command tokens after --', () => {
-    expect(parseSaveInvocation(['--save', 'lint', '--'])).toBeNull()
+  it('returns null when the input is missing', () => {
+    expect(parseSaveInvocation(['--save', 'lint', '', 'eslint'])).toBeNull()
+  })
+
+  it('returns null when the output is missing', () => {
+    expect(parseSaveInvocation(['--save', 'lint', 'lint'])).toBeNull()
+  })
+
+  it('returns null when there are extra unquoted arguments', () => {
+    // Simulates the old, unquoted style: nyxx --save lint -- eslint . --fix
+    expect(parseSaveInvocation(['--save', 'lint', '--', 'eslint', '.', '--fix'])).toBeNull()
   })
 })
 
@@ -154,7 +168,7 @@ describe('saveGlobalCommand', () => {
     mockReadFile.mockRejectedValue(enoentError())
     mockWriteFile.mockResolvedValue(undefined)
 
-    const output = await saveGlobalCommand('lint', ['eslint', '.', '--fix'])
+    const output = await saveGlobalCommand('lint', 'lint', 'eslint . --fix')
 
     expect(output).toBe('eslint . --fix')
     const [writtenPath, writtenContent] = mockWriteFile.mock.calls[0]
@@ -167,20 +181,34 @@ describe('saveGlobalCommand', () => {
     mockReadFile.mockResolvedValue(`commands:\n  deploy:\n    input: 'deploy'\n    output: 'pnpm deploy'`)
     mockWriteFile.mockResolvedValue(undefined)
 
-    await saveGlobalCommand('lint', ['eslint', '.'])
+    await saveGlobalCommand('lint', 'lint', 'eslint .')
 
     const [, writtenContent] = mockWriteFile.mock.calls[0]
     expect(writtenContent).toContain('deploy')
     expect(writtenContent).toContain('lint:')
   })
 
-  it('quotes command tokens that contain spaces', async () => {
+  it('stores the output as-is, without adding quoting', async () => {
     mockReadFile.mockRejectedValue(enoentError())
     mockWriteFile.mockResolvedValue(undefined)
 
-    const output = await saveGlobalCommand('greet', ['echo', 'hello world'])
+    const output = await saveGlobalCommand('commit', 'commit <message>', 'git commit -m {{message}}')
 
-    expect(output).toBe('echo "hello world"')
+    expect(output).toBe('git commit -m {{message}}')
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenContent).toContain('git commit -m {{message}}')
+  })
+
+  it('stores name as the map key, separate from the multi-word input', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await saveGlobalCommand('commit', 'commit <message>', 'git commit -m {{message}}')
+
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    const written = parseYaml(writtenContent)
+    expect(written.commands.commit.input).toBe('commit <message>')
+    expect(written.commands.commit.output).toBe('git commit -m {{message}}')
   })
 })
 
@@ -312,6 +340,20 @@ describe('runMappedCommand', () => {
     await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
 
     expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
+  })
+
+  it('runs a command saved via a quoted --save invocation with a placeholder', async () => {
+    // End-to-end: nyxx --save commit "commit <message>" "git commit -m {{message}}"
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const parsed = parseSaveInvocation(['--save', 'commit', 'commit <message>', 'git commit -m {{message}}'])!
+    const output = await saveGlobalCommand(parsed.name, parsed.input, parsed.output)
+    const commandConfig = { input: parsed.input, output }
+
+    await runMappedCommand(commandConfig, { message: 'wip' }, '/repo')
+
+    expect(mockExeca).toHaveBeenCalledWith('git', ['commit', '-m', 'wip'], { stdio: 'inherit', cwd: '/repo' })
   })
 })
 
