@@ -63,6 +63,14 @@ nyxx --save lint -- eslint . --fix
 
 Everything after `--` is saved verbatim as the command's `output`, and `lint` becomes available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
 
+For a multi-word `input` (with arguments like `<foo>`) or an `output` containing template placeholders like `{{foo}}`, quote each one as a single shell argument — otherwise your shell will split on spaces or try to interpret `<foo>` as input redirection:
+
+```sh
+nyxx --save "commit <message>" -- "git commit -m {{message}}"
+```
+
+This registers `commit <message>` as the command's `input`, so `nyxx commit "fix bug"` runs `git commit -m "fix bug"`.
+
 ### Where a command runs
 
 By default, a command runs in whatever directory you invoked `nyxx` from. Add `runIn: project` to a command to have it run from the nearest ancestor directory containing a `package.json` instead — useful for commands that assume they're at a package root (like cleaning `dist` or `node_modules`) regardless of which subfolder you called them from.

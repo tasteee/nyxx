@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { parse as parseYaml } from 'yaml'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
 const mockAccess = vi.hoisted(() => vi.fn())
@@ -147,6 +148,17 @@ describe('parseSaveInvocation', () => {
   it('returns null when there are no command tokens after --', () => {
     expect(parseSaveInvocation(['--save', 'lint', '--'])).toBeNull()
   })
+
+  it('parses a quoted multi-word name with a placeholder, and a quoted output', () => {
+    // Simulates: nyxx --save "commit <message>" -- "git commit -m {{message}}"
+    // After shell quoting, each quoted string arrives as a single argv entry.
+    const result = parseSaveInvocation(['--save', 'commit <message>', '--', 'git commit -m {{message}}'])
+
+    expect(result).toEqual({
+      name: 'commit <message>',
+      commandTokens: ['git commit -m {{message}}'],
+    })
+  })
 })
 
 describe('saveGlobalCommand', () => {
@@ -181,6 +193,28 @@ describe('saveGlobalCommand', () => {
     const output = await saveGlobalCommand('greet', ['echo', 'hello world'])
 
     expect(output).toBe('echo "hello world"')
+  })
+
+  it('uses a single quoted output token as-is, without re-quoting it', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const output = await saveGlobalCommand('commit', ['git commit -m {{message}}'])
+
+    expect(output).toBe('git commit -m {{message}}')
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    expect(writtenContent).toContain('git commit -m {{message}}')
+  })
+
+  it('stores a multi-word quoted name as the command input', async () => {
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    await saveGlobalCommand('commit <message>', ['git commit -m {{message}}'])
+
+    const [, writtenContent] = mockWriteFile.mock.calls[0]
+    const written = parseYaml(writtenContent)
+    expect(written.commands['commit <message>'].input).toBe('commit <message>')
   })
 })
 
@@ -312,6 +346,20 @@ describe('runMappedCommand', () => {
     await runMappedCommand(commandConfig, {}, '/repo/packages/ui/src')
 
     expect(mockExeca).toHaveBeenCalledWith('rm', ['-rf', 'dist'], { stdio: 'inherit', cwd: '/repo/packages/ui/src' })
+  })
+
+  it('runs a command saved via a quoted --save invocation with a placeholder', async () => {
+    // End-to-end: nyxx --save "commit <message>" -- "git commit -m {{message}}"
+    mockReadFile.mockRejectedValue(enoentError())
+    mockWriteFile.mockResolvedValue(undefined)
+
+    const parsed = parseSaveInvocation(['--save', 'commit <message>', '--', 'git commit -m {{message}}'])!
+    const output = await saveGlobalCommand(parsed.name, parsed.commandTokens)
+    const commandConfig = { input: parsed.name, output }
+
+    await runMappedCommand(commandConfig, { message: 'wip' }, '/repo')
+
+    expect(mockExeca).toHaveBeenCalledWith('git', ['commit', '-m', 'wip'], { stdio: 'inherit', cwd: '/repo' })
   })
 })
 

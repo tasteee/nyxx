@@ -153,11 +153,19 @@ const quoteArgumentIfNeeded = (argument: string): string => {
 
 // Registers <name> as a global command that runs commandTokens verbatim,
 // writing the result into ~/.nyxx.yml. Returns the joined output string.
+//
+// A single commandToken (e.g. `-- "git commit -m {{message}}"`) is already the
+// full output command as one shell-quoted argument, so it's used as-is; quoting
+// it again would make parseArgsStringToArgv treat the whole thing as one argv
+// entry at run time instead of splitting it back into words. Multiple tokens
+// (e.g. `-- git commit -m "{{message}}"`) are reconstructed with quoting only
+// on the tokens that need it, to preserve embedded spaces as single words.
 export const saveGlobalCommand = async (name: string, commandTokens: string[]): Promise<string> => {
   const globalConfigPath = getGlobalConfigPath()
   const existingConfig = (await readYamlFileIfExists(globalConfigPath)) ?? {}
   const commands = { ...(existingConfig.commands ?? {}) }
-  const output = commandTokens.map(quoteArgumentIfNeeded).join(' ')
+
+  const output = commandTokens.length === 1 ? commandTokens[0] : commandTokens.map(quoteArgumentIfNeeded).join(' ')
 
   commands[name] = { input: name, output }
   const updatedConfig = { ...existingConfig, commands }
@@ -250,6 +258,8 @@ const main = async () => {
 
     if (!parsed) {
       console.error('Usage: nyxx --save <name> -- <command...>')
+      console.error('For a multi-word name or an output with {{placeholders}}, quote each side, e.g.:')
+      console.error('  nyxx --save "commit <message>" -- "git commit -m {{message}}"')
       process.exit(1)
     }
 
