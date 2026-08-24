@@ -58,18 +58,18 @@ Running `nyxx` with no arguments also creates `~/.nyxx.yml` for you if it doesn'
 You can also register a global command straight from the terminal, without editing YAML:
 
 ```sh
-nyxx --save "lint" "eslint . --fix"
+nyxx --save lint "lint" "eslint . --fix"
 ```
 
-The first argument is saved verbatim as the command's `input`, and the second as its `output`, so `lint` becomes available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
+`--save` takes three arguments: `<name>` (the key under `commands:` in `~/.nyxx.yml`), `"<input>"`, and `"<output>"` — matching the fields you'd otherwise write by hand. This registers `lint` as available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
 
-Both arguments must be quoted, even for a single word — `--save` only accepts exactly `--save "<name>" "<output>"`. This matters once `input` is multiple words or has arguments like `<foo>`, or `output` has template placeholders like `{{foo}}`: without quotes, your shell would split on spaces or try to interpret `<foo>` as input redirection.
+`input` and `output` must each be quoted, even for a single word — `--save` only accepts exactly `--save <name> "<input>" "<output>"`. This matters once `input` is multiple words or has arguments like `<foo>`, or `output` has template placeholders like `{{foo}}`: without quotes, your shell would split on spaces or try to interpret `<foo>` as input redirection.
 
 ```sh
-nyxx --save "commit <message>" "git commit -m {{message}}"
+nyxx --save commit "commit <message>" "git commit -m {{message}}"
 ```
 
-This registers `commit <message>` as the command's `input`, so `nyxx commit "fix bug"` runs `git commit -m "fix bug"`.
+This registers `commit` as the command name, with `commit <message>` as its `input`, so `nyxx commit "fix bug"` runs `git commit -m "fix bug"`.
 
 ### Where a command runs
 

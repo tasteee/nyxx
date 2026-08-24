@@ -132,31 +132,33 @@ export const ensureGlobalConfigExists = async (): Promise<void> => {
   }
 }
 
-// Parses `--save "<name>" "<output>"` from raw argv (process.argv.slice(2)).
-// Both name and output must each arrive as a single (shell-quoted) argument,
-// since either may be multi-word (e.g. `foo bar <baz>`) or contain characters
-// the shell would otherwise interpret, like `<baz>` as input redirection.
+// Parses `--save <name> "<input>" "<output>"` from raw argv (process.argv.slice(2)).
+// name is the map key under `commands:` in nyxx.yml; input and output must each
+// arrive as a single (shell-quoted) argument, since either may be multi-word
+// (e.g. `foo bar <baz>`) or contain characters the shell would otherwise
+// interpret, like `<baz>` as input redirection.
 // Returns null if argv doesn't match that shape, so the caller can print usage.
-export const parseSaveInvocation = (argv: string[]): { name: string; output: string } | null => {
+export const parseSaveInvocation = (argv: string[]): { name: string; input: string; output: string } | null => {
   if (argv[0] !== '--save') return null
-  if (argv.length !== 3) return null
+  if (argv.length !== 4) return null
 
   const name = argv[1]
-  const output = argv[2]
-  if (!name || !output) return null
+  const input = argv[2]
+  const output = argv[3]
+  if (!name || !input || !output) return null
 
-  return { name, output }
+  return { name, input, output }
 }
 
-// Registers <name> as a global command with the given output, writing the
-// result into ~/.nyxx.yml verbatim (no quoting/joining — both name and output
-// are already complete strings).
-export const saveGlobalCommand = async (name: string, output: string): Promise<string> => {
+// Registers <name> as a global command with the given input/output, writing
+// the result into ~/.nyxx.yml verbatim (no quoting/joining — all three are
+// already complete strings).
+export const saveGlobalCommand = async (name: string, input: string, output: string): Promise<string> => {
   const globalConfigPath = getGlobalConfigPath()
   const existingConfig = (await readYamlFileIfExists(globalConfigPath)) ?? {}
   const commands = { ...(existingConfig.commands ?? {}) }
 
-  commands[name] = { input: name, output }
+  commands[name] = { input, output }
   const updatedConfig = { ...existingConfig, commands }
   await fs.writeFile(globalConfigPath, stringifyYaml(updatedConfig), 'utf8')
 
@@ -246,13 +248,13 @@ const main = async () => {
     const parsed = parseSaveInvocation(argv)
 
     if (!parsed) {
-      console.error('Usage: nyxx --save "<name>" "<output>"')
-      console.error('Both name and output must each be a single quoted argument, e.g.:')
-      console.error('  nyxx --save "commit <message>" "git commit -m {{message}}"')
+      console.error('Usage: nyxx --save <name> "<input>" "<output>"')
+      console.error('input and output must each be a single quoted argument, e.g.:')
+      console.error('  nyxx --save commit "commit <message>" "git commit -m {{message}}"')
       process.exit(1)
     }
 
-    const output = await saveGlobalCommand(parsed.name, parsed.output)
+    const output = await saveGlobalCommand(parsed.name, parsed.input, parsed.output)
     console.log(`Saved global command "${parsed.name}" -> ${output}`)
     process.exit(0)
   }
