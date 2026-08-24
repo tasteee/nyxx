@@ -58,15 +58,15 @@ Running `nyxx` with no arguments also creates `~/.nyxx.yml` for you if it doesn'
 You can also register a global command straight from the terminal, without editing YAML:
 
 ```sh
-nyxx --save lint -- eslint . --fix
+nyxx --save "lint" "eslint . --fix"
 ```
 
-Everything after `--` is saved verbatim as the command's `output`, and `lint` becomes available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
+The first argument is saved verbatim as the command's `input`, and the second as its `output`, so `lint` becomes available from any directory as `nyxx lint`. `--save` is reserved, so a command's `input` in your `nyxx.yml` can never start with `--`.
 
-For a multi-word `input` (with arguments like `<foo>`) or an `output` containing template placeholders like `{{foo}}`, quote each one as a single shell argument — otherwise your shell will split on spaces or try to interpret `<foo>` as input redirection:
+Both arguments must be quoted, even for a single word — `--save` only accepts exactly `--save "<name>" "<output>"`. This matters once `input` is multiple words or has arguments like `<foo>`, or `output` has template placeholders like `{{foo}}`: without quotes, your shell would split on spaces or try to interpret `<foo>` as input redirection.
 
 ```sh
-nyxx --save "commit <message>" -- "git commit -m {{message}}"
+nyxx --save "commit <message>" "git commit -m {{message}}"
 ```
 
 This registers `commit <message>` as the command's `input`, so `nyxx commit "fix bug"` runs `git commit -m "fix bug"`.
